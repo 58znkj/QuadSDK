@@ -48,9 +48,6 @@ public:
   /**
    * @brief 访问定位模块。
    *
-   * 出于目录稳定性与历史命名兼容，模块名称仍为 `MappingModule`；
-   * 在当前 Quad facade 中，该模块主要承载定位相关能力。
-   *
    * @return 定位模块引用。
    */
   MappingModule& mapping();

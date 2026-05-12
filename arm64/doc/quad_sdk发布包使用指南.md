@@ -43,6 +43,10 @@ sudo apt-get install -y build-essential cmake
   CLI 调试工具
 - `x86_64/bin/quad_example_point_nav_workflow`
   定点导航工作流示例可执行文件
+- `x86_64/bin/quad_example_multi_point_nav_queue`
+  多点定点导航队列示例可执行文件
+- `x86_64/bin/quad_example_multi_point_nav_queue_current_config.sh`
+  多点导航队列当前调试配置脚本，可通过环境变量覆盖默认机器人 IP、场景和导航点
 - `x86_64/bin/quad_example_logging`
   日志配置示例可执行文件
 - `x86_64/include/`
@@ -52,7 +56,7 @@ sudo apt-get install -y build-essential cmake
 - `x86_64/lib/cmake/robot/`
   CMake 包配置目录
 - `x86_64/doc/`
-  随包文档目录，包含发布包使用指南、CLI 说明和版本变更说明
+  随包文档目录，包含发布包使用指南、CLI 说明、接口规格书和版本变更说明
 - `x86_64/doc/Quad_SDK版本变更说明.md`
   当前版本的对外变更记录
 - `x86_64/examples/`
@@ -207,15 +211,21 @@ Quad 的典型业务流程是：
 1. 创建 `robot::quad::Robot`
 2. `connect(timeout)`
 3. `nav().resource().refreshMapResources()`
-4. `nav().mapping().startLocalization()`
+4. `nav().mapping().startLocalization()`；如果已知初始位姿，可调用 `startLocalization(scene_name, initial_pose, ...)` 启动重定位
 5. `nav().navigation().setMotionMode(robot::quad::MotionMode::Navigation)`
-6. `nav().navigation().startNavigation(scene_name, path_id, ...)`
+6. 通过 `nav().navigation().startNavigation(scene_name, pose, ...)` 发起定点导航，或通过 `startNavigation(scene_name, path_id, ...)` 发起循迹导航
+
+同一 SDK 实例同一时间只允许一个导航任务处于 active 生命周期；上一导航任务到达终态或 `stopNavigation()` 完成前再次启动导航，会通过异步回调返回 `SDK_NAVIGATION_BUSY`。
 
 建议直接参考发布包中的示例：
 
 - `x86_64/bin/quad_example_point_nav_workflow`
+- `x86_64/bin/quad_example_multi_point_nav_queue`
+- `x86_64/bin/quad_example_multi_point_nav_queue_current_config.sh`
 - `x86_64/bin/quad_example_logging`
 - `x86_64/examples/pose_nav_workflow/main.cpp`
+- `x86_64/examples/multi_point_nav_queue/main.cpp`
+- `x86_64/examples/multi_point_nav_queue/run_current_config.sh`
 - `x86_64/examples/logging/main.cpp`
 
 ## 7. 使用发布包示例工程
@@ -239,8 +249,12 @@ cmake --build build -j
 ```bash
 cd x86_64
 ./bin/quad_example_point_nav_workflow
+./bin/quad_example_multi_point_nav_queue --help
+./bin/quad_example_multi_point_nav_queue_current_config.sh
 ./bin/quad_example_logging
 ```
+
+`quad_example_multi_point_nav_queue_current_config.sh` 中的默认机器人 IP、场景名和导航点只适合作为模板。现场使用时请修改脚本，或通过 `ROBOT_IP`、`SCENE_NAME`、`ADVANCE_AFTER_MS`、`FINISH_TIMEOUT_MS` 等环境变量覆盖。
 
 ## 8. Linux 运行时注意事项
 

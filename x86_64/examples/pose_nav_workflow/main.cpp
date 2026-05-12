@@ -107,8 +107,8 @@ int main() {
     }
 
     std::cout << "重定位完成"
-              << " x=" << localization_state.info.position_x
-              << " y=" << localization_state.info.position_y
+              << " x=" << localization_state.pose.position.x
+              << " y=" << localization_state.pose.position.y
               << "\n";
 
     // 第 4 步：启动定位导航
@@ -157,7 +157,8 @@ int main() {
               << " status=" << static_cast<int>(navigation_state.status)
               << " task_id=" << navigation_state.task_id
               << " error=" << static_cast<int>(navigation_state.error)
-              << " output_status=" << navigation_state.output_status
+              << " output_status="
+              << static_cast<uint32_t>(navigation_state.output_status)
               << "\n";
 
     if (navigation_state.error == ErrorCode::NAV_STOP_BARRIER ||
@@ -242,7 +243,8 @@ int main() {
               << " status=" << static_cast<int>(final_navigation_state.status)
               << " task_id=" << final_navigation_state.task_id
               << " error=" << static_cast<int>(final_navigation_state.error)
-              << " output_status=" << final_navigation_state.output_status
+              << " output_status="
+              << static_cast<uint32_t>(final_navigation_state.output_status)
               << "\n";
 
     return finish(0);

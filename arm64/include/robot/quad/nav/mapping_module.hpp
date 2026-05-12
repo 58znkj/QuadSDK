@@ -20,8 +20,7 @@ namespace nav {
 /**
  * @brief Quad 定位模块。
  *
- * 出于目录稳定性与历史命名兼容，类名仍沿用 `MappingModule`。
- * 在当前 Quad facade 中，该模块对外提供定位控制、状态读取与状态订阅能力。
+ * 该模块对外提供定位控制、状态读取与状态订阅能力。
  */
 class ROBOT_QUAD_API MappingModule {
 public:

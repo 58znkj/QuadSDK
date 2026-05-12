@@ -1,6 +1,6 @@
-# 四足机器够导航SDK接口规格书
+# 四足机器狗导航 SDK 接口规格书
 
-本文档为 Quad SDK 公开接口的完整规格说明。
+本文档为 Quad SDK 公开接口的完整规格说明，接口定义以 `src/sdk/facade/quad/include/robot/quad` 下当前公开头文件为准。
 
 ## 目录
 
@@ -11,7 +11,7 @@
 - [5. 导航控制模块：nav::NavigationModule](#5-导航控制模块navnavigationmodule)
 - [6. 定位模块：nav::MappingModule](#6-定位模块navmappingmodule)
 - [7. 资源模块：nav::ResourceModule](#7-资源模块navresourcemodule)
-- [8. 类型定义参考](#8-类型定义参考)
+- [8. 类型与版本定义参考](#8-类型与版本定义参考)
 - [附录：类型索引](#附录类型索引)
 
 ---
@@ -49,17 +49,19 @@ Quad SDK 是四足机器人面向用户的抽象层，提供：
 
 ## 2. 命名空间与头文件
 
-| 头文件 | 命名空间 |
-|--------|----------|
-| `robot/quad/api.hpp` | 聚合头，建议直接包含此文件 |
+| 头文件 | 内容 |
+|--------|------|
+| `robot/quad/api.hpp` | 聚合头，统一导出公开类型、版本、Robot 与导航业务域接口；建议业务工程直接包含此文件 |
+| `robot/quad/types.hpp` | 公开类型聚合头，统一导出 common、motion、nav 与 robot 领域类型 |
+| `robot/quad/version.hpp` | `robot::quad`（SDK 版本信息） |
 | `robot/quad/robot.hpp` | `robot::quad::Robot` |
 | `robot/quad/nav/domain.hpp` | `robot::quad::nav::Domain` |
 | `robot/quad/nav/navigation_module.hpp` | `robot::quad::nav::NavigationModule` |
 | `robot/quad/nav/mapping_module.hpp` | `robot::quad::nav::MappingModule` |
-| `robot/quad/nav/resource_module.hpp` | `robot/quad/nav/resource_module.hpp` |
+| `robot/quad/nav/resource_module.hpp` | `robot::quad::nav::ResourceModule` |
 | `robot/quad/common/types.hpp` | `robot::quad`（通用类型） |
 | `robot/quad/error.hpp` | `robot::quad`（错误码） |
-| `robot/quad/nav/types.hpp` | `robot/quad`（导航类型） |
+| `robot/quad/nav/types.hpp` | `robot::quad`（导航、定位与地图资源类型） |
 | `robot/quad/motion/types.hpp` | `robot::quad`（运动类型） |
 | `robot/quad/robot/types.hpp` | `robot::quad`（机器人类型） |
 
@@ -81,7 +83,7 @@ explicit Robot(const RobotOptions& options = RobotOptions{})
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| `options` | [RobotOptions](#robotoptions) | 连接参数与 SDK 标识 |
+| `options` | [RobotOptions](#robotoptions) | 机器人连接参数 |
 
 ### 3.2 连接管理
 
@@ -138,7 +140,7 @@ explicit Robot(const RobotOptions& options = RobotOptions{})
 | `setLogFilePath` | `file_path`: `const std::string&` | `void` | 设置日志文件路径（默认 `./logs/quad_sdk.log`） |
 | `setLogCallback` | `callback`: [LogCallback](#logcallback) | `void` | 注册全局日志回调 |
 
-**环境变量覆盖**（仅在未显式配置时生效）: `ROBOT_QUAD_LOG_LEVEL`、`ROBOT_QUAD_CONSOLE_LOG_LEVEL`、`ROBOT_QUAD_FILE_LOG_LEVEL`
+**环境变量覆盖**（仅在未显式配置时生效）: `ROBOT_QUAD_LOG_LEVEL` 可同时覆盖控制台与文件日志等级；`ROBOT_QUAD_CONSOLE_LOG_LEVEL`、`ROBOT_QUAD_FILE_LOG_LEVEL` 可分别覆盖控制台与文件日志等级。
 
 ---
 
@@ -195,7 +197,7 @@ explicit Robot(const RobotOptions& options = RobotOptions{})
 
 **返回值**: [AsyncCommandId](#asynccommandid)
 
-**说明**: 当前定点导航仅支持二维平面，实际只使用 `target.position.x`、`target.position.y` 与绕 Z 轴偏航角。可配合 [pose2DFromPose()](#pose2dfrompose)、[poseFromPose2D()](#posefrompose2d) 或 [poseFromXYYawDegrees()](#posefromxyyawdegrees) 使用。
+**说明**: 当前定点导航仅支持二维平面，实际只使用 `target.position.x`、`target.position.y` 与绕 Z 轴偏航角。可配合 [pose2DFromPose()](#pose2dfrompose)、[poseFromPose2D()](#posefrompose2d) 或 [poseFromXYYawDegrees()](#posefromxyyawdegrees) 使用。同一 SDK 实例同一时间只允许一个导航任务处于 active 生命周期；在上一任务到达终态或 `stopNavigation()` 完成前再次调用 `startNavigation()`，回调会返回 `SDK_NAVIGATION_BUSY`，且 SDK 不会下发新的导航命令。
 
 ### 5.3 循迹导航
 
@@ -206,12 +208,14 @@ explicit Robot(const RobotOptions& options = RobotOptions{})
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | `scene_name` | `const std::string&` | 路径所属场景名称 |
-| `path_id` | `int32_t` | 轨迹路径 ID，可从 [MapResourceSnapshot::trajectories](#mapresourcesnapshot) 中获取 |
+| `path_id` | `int32_t` | 轨迹路径 ID，可从 [MapResourceSnapshot::trajectories](#mapresourcesnapshot) 中各 `NavigationTrajectory::paths` 的 `NavigationPath::path_id` 获取 |
 | `forward` | `bool` | `true` 表示正向循迹，`false` 表示反向循迹 |
 | `obstacle_timeout_s` | `uint32_t` | 障碍等待超时时间，单位为秒 |
 | `callback` | [AsyncCommandCallback](#asynccommandcallback) | 异步命令回调 |
 
 **返回值**: [AsyncCommandId](#asynccommandid)
+
+**说明**: 与定点导航相同，循迹导航受 SDK 导航 active 门禁保护；上一导航任务未结束前再次启动会返回 `SDK_NAVIGATION_BUSY`。
 
 ### 5.4 停止与暂停
 
@@ -224,6 +228,8 @@ explicit Robot(const RobotOptions& options = RobotOptions{})
 | `callback` | [AsyncCommandCallback](#asynccommandcallback) | 异步命令回调 |
 
 **返回值**: [AsyncCommandId](#asynccommandid)
+
+**说明**: `stopNavigation()` 下发后，SDK 会继续保持导航 active，直到收到 `CANCELLED`、`IDLE`、`FINISHED` 或 `FAILED` 等停止/终态反馈后才允许新的 `startNavigation()`。
 
 #### `AsyncCommandId setNavigationPaused(bool paused, AsyncCommandCallback callback = {})`
 
@@ -341,9 +347,8 @@ explicit Robot(const RobotOptions& options = RobotOptions{})
 
 **说明**:
 
-- SDK 会在 `/MOCTS/PosCtrl` 中附带该初始位姿。
-- 该接口适合“已知机器人大致位置”的场景，也就是重定位。
-- 若机器人端仍使用旧版协议并忽略该可选字段，定位流程会退化为普通 `startLocalization(scene_name)`。
+- 该接口适合已知机器人大致位置的场景，也就是重定位。
+- `initial_pose` 使用 [Pose](#pose) 表达；如业务只关心二维平面位姿，可配合 [poseFromPose2D()](#posefrompose2d) 或 [poseFromXYYawDegrees()](#posefromxyyawdegrees) 构造。
 - 该接口回调成功只表示命令受理成功；机器人真正完成重定位后，通常还需要继续轮询 `getLocalizationState()`，等待 `ready=true` 且 `fresh=true`。
 
 **简单调用示例**:
@@ -391,7 +396,7 @@ while (true) {
 
 **返回值**: [LocalizationState](#localizationstate)
 
-**说明**: 常见读取字段包括 `ready`、`fresh` 以及 `info.position_x / position_y`。对简单示例而言，启动定位或重定位后直接轮询该接口即可。
+**说明**: 常见读取字段包括 `ready`、`fresh`、`pose.position.x / pose.position.y` 以及 `laser_quality`。对简单示例而言，启动定位或重定位后直接轮询该接口即可。
 
 ### 6.3 状态订阅
 
@@ -408,7 +413,7 @@ while (true) {
 
 **说明**:
 
-- 当底层 `/PNS/PnsSlamInfo` 或 `/PNS/Position` 更新时，SDK 会重新计算 `LocalizationState` 并通过该接口分发。
+- 当定位缓存更新时，SDK 会重新计算 `LocalizationState` 并通过该接口分发。
 - 该接口适合实时 UI 刷新、长期监控或需要订阅位姿变化的场景。
 - 若只需在定位开始后等待状态就绪，继续轮询 `getLocalizationState()` 仍然是更简单的接入方式。
 
@@ -484,7 +489,7 @@ while (true) {
 
 ---
 
-## 8. 类型定义参考
+## 8. 类型与版本定义参考
 
 ### 8.1 通用类型（common/types.hpp）
 
@@ -694,6 +699,7 @@ enum class ErrorCode {
     SDK_IO_ERROR = 608,
     SDK_PROTOCOL_UNKNOWN_CODE = 609,
     SDK_COMMAND_SUPERSEDED = 610,
+    SDK_NAVIGATION_BUSY = 611,
     SDK_INTERNAL_ERROR = 699,
 };
 ```
@@ -735,7 +741,7 @@ ROBOT_QUAD_API std::string formatErrorCodeForLog(
 
 ---
 
-### 8.3 导航与建图类型（nav/types.hpp）
+### 8.3 导航、定位与地图资源类型（nav/types.hpp）
 
 #### NavigationStatus {#navigationstatus}
 
@@ -748,67 +754,6 @@ enum class NavigationStatus {
     FINISHED = 2,  // 已完成
     CANCELLED = 3, // 已取消
     FAILED = 4     // 执行失败
-};
-```
-
-#### SLAMWorkMode {#slamworkmode}
-
-SLAM 工作模式。
-
-```cpp
-enum class SLAMWorkMode {
-    IDLE = 0,       // 空闲
-    MAPPING = 1,    // 建图中
-    SAVING = 2,     // 保存地图中
-    RELOCATING = 3, // 重定位中
-    LOCALIZING = 4  // 定位中
-};
-```
-
-#### MappingSceneType {#mappingscenetype}
-
-建图场景类型。
-
-```cpp
-enum class MappingSceneType {
-    INDOOR = 1,          // 室内场景
-    OUTDOOR_NORMAL = 2,  // 常规室外场景
-    OUTDOOR_OPEN = 3     // 开阔室外场景
-};
-```
-
-#### SLAMErrorCode {#slamerrorcode}
-
-SLAM 错误码。
-
-```cpp
-enum class SLAMErrorCode {
-    NORMAL = 0,
-    UNABLE_START = 1,
-    NO_IMU = 2,
-    NO_LIDAR = 3,
-    LIDAR_INCOMPLETE = 4,
-    MAP_NOT_FOUND = 5,
-    LOCALIZE_ERROR = 6,
-    SLAM_COLLAPSE = 7,
-    MAPPING_FAIL = 8,
-    LIDAR_ERROR = 9,
-    IMU_ERROR = 10,
-    GNSS_ERROR = 11,
-    SYNC_ERROR = 12
-};
-```
-
-#### RecordResult {#recordresult}
-
-轨迹录制结果。
-
-```cpp
-enum class RecordResult {
-    POINT_ADDED = 0,  // 新增了一个录制点
-    SUCCESS = 1,      // 录制成功
-    FAIL = 2,         // 录制失败
-    STARTING = 3      // 录制启动中
 };
 ```
 
@@ -838,32 +783,30 @@ struct MapTransferOptions {
 };
 ```
 
-#### MappingPathPoint {#mappingpathpoint}
+#### NavigationTaskMode {#navigationtaskmode}
 
-建图路径点。
+导航任务模式。
 
 ```cpp
-struct MappingPathPoint {
-    double x{0};  // X 坐标
-    double y{0};  // Y 坐标
-    double z{0};  // Z 坐标
+enum class NavigationTaskMode : uint32_t {
+    POSE = 0,             // 定点导航
+    PATH = 1,             // 循迹导航
+    UNKNOWN = 0xFFFFFFFF  // 未知模式
 };
 ```
 
-#### LocalizationInfo {#localizationinfo}
+#### NavigationOutputStatus {#navigationoutputstatus}
 
-定位结果。
+导航输出状态。
 
 ```cpp
-struct LocalizationInfo {
-    float position_x{0};
-    float position_y{0};
-    float position_z{0};
-    float orientation_w{1};
-    float orientation_x{0};
-    float orientation_y{0};
-    float orientation_z{0};
-    float laser_quality{0};    // 激光质量评分
+enum class NavigationOutputStatus : uint32_t {
+    NONE = 0,             // 无任务状态
+    FINISHED = 1,         // 导航任务完成
+    RUNNING = 2,          // 导航任务正在执行
+    CANCELLED = 3,        // 导航任务取消
+    FAILED = 4,           // 导航任务失败
+    UNKNOWN = 0xFFFFFFFF  // 未知输出状态
 };
 ```
 
@@ -873,13 +816,14 @@ struct LocalizationInfo {
 
 ```cpp
 struct NavigationState {
-    NavigationStatus status{NavigationStatus::IDLE};
-    uint32_t         task_id{0};
-    uint32_t         task_mode{0};
-    uint32_t         output_status{0};
-    uint32_t         current_map_index{0};
-    ErrorCode        error{ErrorCode::SUCCESS};
-    bool             fresh{false};  // 当前连接周期内是否已收到有效上报
+    NavigationStatus       status{NavigationStatus::IDLE};
+    uint32_t               task_id{0};
+    NavigationTaskMode     task_mode{NavigationTaskMode::UNKNOWN};
+    NavigationOutputStatus output_status{NavigationOutputStatus::NONE};
+    uint32_t               current_map_index{0};
+    ErrorCode              error{ErrorCode::SUCCESS};
+    std::string            error_message;
+    bool                   fresh{false};  // 当前连接周期内是否已收到有效上报
 };
 ```
 
@@ -969,49 +913,16 @@ struct NavigationTrajectory {
 };
 ```
 
-#### SlamState {#slamstate}
-
-SLAM 状态快照。
-
-```cpp
-struct SlamState {
-    SLAMWorkMode  mode{SLAMWorkMode::IDLE};
-    SLAMErrorCode error{SLAMErrorCode::NORMAL};
-    bool          is_mapping{false};
-    bool          fresh{false};
-};
-```
-
 #### LocalizationState {#localizationstate}
 
 定位状态快照。
 
 ```cpp
 struct LocalizationState {
-    LocalizationInfo info;
-    bool             ready{false};
-    bool             fresh{false};
-};
-```
-
-#### MappingProgressState {#mappingprogressstate}
-
-建图进度状态。
-
-```cpp
-struct MappingProgressState {
-    std::optional<MappingPathPoint> latest_path_point;
-    bool                            fresh{false};
-};
-```
-
-#### RecordingState {#recordingstate}
-
-录制状态快照。
-
-```cpp
-struct RecordingState {
-    RecordResult result{RecordResult::FAIL};
+    Pose  pose;
+    float laser_quality{0};
+    bool  ready{false};
+    bool  fresh{false};
 };
 ```
 
@@ -1047,14 +958,10 @@ struct MapResourceEvent {
 
 | 类型 | 签名 |
 |------|------|
-| `SlamStateEventCallback` | `std::function<void(const SlamState&)>` |
 | `LocalizationStateEventCallback` | `std::function<void(const LocalizationState&)>` |
-| `MappingPathPointEventCallback` | `std::function<void(const std::optional<MappingPathPoint>&)>` |
-| `MappingProgressEventCallback` | `std::function<void(const MappingProgressState&)>` |
 | `NavigationStateEventCallback` | `std::function<void(const NavigationState&)>` |
 | `NavigationResultEventCallback` | `std::function<void(const NavigationResult&)>` |
 | `PauseStateEventCallback` | `std::function<void(const PauseState&)>` |
-| `RecordingStateEventCallback` | `std::function<void(const RecordingState&)>` |
 | `MapResourceEventCallback` | `std::function<void(const MapResourceEvent&)>` |
 | `MapTransferCallback` | `std::function<void(ErrorCode)>` |
 
@@ -1135,26 +1042,59 @@ using LogCallback = std::function<void(LogLevel,
 
 ---
 
+### 8.6 版本信息（version.hpp）
+
+`robot/quad/version.hpp` 由构建系统根据 SDK 版本生成。业务代码可通过版本宏或 `robot::quad` 命名空间下的 `constexpr` 访问函数读取当前 SDK 版本。
+
+#### 版本宏
+
+生成后的头文件会定义以下宏：
+
+```cpp
+ROBOT_QUAD_VERSION_STRING
+ROBOT_QUAD_VERSION_MAJOR
+ROBOT_QUAD_VERSION_MINOR
+ROBOT_QUAD_VERSION_PATCH
+```
+
+#### 版本访问函数
+
+```cpp
+inline constexpr const char* sdk_version_string() noexcept;
+inline constexpr int sdk_version_major() noexcept;
+inline constexpr int sdk_version_minor() noexcept;
+inline constexpr int sdk_version_patch() noexcept;
+```
+
+| 函数 | 返回值 |
+|------|--------|
+| `sdk_version_string()` | SDK 版本字符串 |
+| `sdk_version_major()` | 主版本号 |
+| `sdk_version_minor()` | 次版本号 |
+| `sdk_version_patch()` | 补丁版本号 |
+
+---
+
 ## 附录：类型索引
 
 ### 按模块分组
 
-| 模块 | 类型 |
-|------|------|
+| 模块 | 类型 / 接口 |
+|------|-----------|
 | **Robot** | [RobotOptions](#robotoptions) |
 | **日志** | [LogLevel](#loglevel)、[LogCallback](#logcallback) |
-| **导航** | [NavigationModule](#navnavigationmodule)、[NavigationState](#navigationstate)、[NavigationStatus](#navigationstatus)、[NavigationPoint](#navigationpoint)、[NavigationPath](#navigationpath)、[NavigationTrajectory](#navigationtrajectory) |
-| **定位** | [MappingModule](#navmappingmodule)、[LocalizationState](#localizationstate)、[LocalizationInfo](#localizationinfo) |
+| **版本** | `ROBOT_QUAD_VERSION_*`、`sdk_version_string()`、`sdk_version_major()`、`sdk_version_minor()`、`sdk_version_patch()` |
+| **导航** | [NavigationModule](#navnavigationmodule)、[NavigationState](#navigationstate)、[NavigationStatus](#navigationstatus)、[NavigationTaskMode](#navigationtaskmode)、[NavigationOutputStatus](#navigationoutputstatus)、[NavigationPoint](#navigationpoint)、[NavigationPath](#navigationpath)、[NavigationTrajectory](#navigationtrajectory) |
+| **定位** | [MappingModule](#navmappingmodule)、[LocalizationState](#localizationstate) |
 | **资源** | [ResourceModule](#navresourcemodule)、[MapResourceSnapshot](#mapresourcesnapshot)、[MapResourceEvent](#mapresourceevent)、[MapResourceEventType](#mapresourceeventtype)、[MapTransferOptions](#maptransferoptions)、[SceneInfo](#sceneinfo)、[SceneDetail](#scenedetail) |
-| **SLAM/建图** | [SlamState](#slamstate)、[SLAMWorkMode](#slamworkmode)、[SLAMErrorCode](#slamerrorcode)、[MappingSceneType](#mappingscenetype)、[MappingPathPoint](#mappingpathpoint)、[MappingProgressState](#mappingprogressstate)、[RecordResult](#recordresult)、[RecordingState](#recordingstate) |
 | **运动** | [MotionMode](#motionmode)、[MotionState](#motionstate)、[GaitType](#gaittype) |
 | **通用** | [Pose](#pose)、[Pose2D](#pose2d)、[Point3D](#point3d)、[Quaternion](#quaternion)、[Subscription](#subscription)、[SubscribeOptions](#subscribeoptions)、[AsyncCommandId](#asynccommandid)、[AsyncCommandStatus](#asynccommandstatus)、[AsyncCommandResult](#asynccommandresult)、[AsyncCommandCallback](#asynccommandcallback) |
 | **错误** | [ErrorCode](#errorcode)、[ErrorItem](#erroritem)、[ErrorDescriptionLanguage](#errordescriptionlanguage) |
 
 ### 按字母顺序
 
-| 类型 | 所在章节 |
-|------|----------|
+| 类型 / 接口 | 所在章节 |
+|-----------|----------|
 | `AsyncCommandCallback` | [8.1](#81-通用类型commontypeshpp) |
 | `AsyncCommandId` | [8.1](#81-通用类型commontypeshpp) |
 | `AsyncCommandResult` | [8.1](#81-通用类型commontypeshpp) |
@@ -1163,40 +1103,37 @@ using LogCallback = std::function<void(LogLevel,
 | `ErrorDescriptionLanguage` | [8.2](#82-错误类型errorhpp) |
 | `ErrorItem` | [8.2](#82-错误类型errorhpp) |
 | `GaitType` | [8.4](#84-运动类型motiontypeshpp) |
-| `LocalizationInfo` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `LocalizationStateEventCallback` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `LocalizationState` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `LogCallback` | [8.5](#85-机器人类型robotypeshpp) |
-| `LogLevel` | [8.5](#85-机器人类型robotypeshpp) |
-| `MapResourceEvent` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `MapResourceEventCallback` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `MapResourceEventType` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `MapResourceSnapshot` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `MapTransferCallback` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `MapTransferOptions` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `MappingPathPoint` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `MappingProgressState` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `MappingSceneType` | [8.3](#83-导航与建图类型navtypeshpp) |
+| `LocalizationStateEventCallback` | [8.3](#83-导航定位与地图资源类型navtypeshpp) |
+| `LocalizationState` | [8.3](#83-导航定位与地图资源类型navtypeshpp) |
+| `LogCallback` | [8.5](#85-机器人类型robottypeshpp) |
+| `LogLevel` | [8.5](#85-机器人类型robottypeshpp) |
+| `MapResourceEvent` | [8.3](#83-导航定位与地图资源类型navtypeshpp) |
+| `MapResourceEventCallback` | [8.3](#83-导航定位与地图资源类型navtypeshpp) |
+| `MapResourceEventType` | [8.3](#83-导航定位与地图资源类型navtypeshpp) |
+| `MapResourceSnapshot` | [8.3](#83-导航定位与地图资源类型navtypeshpp) |
+| `MapTransferCallback` | [8.3](#83-导航定位与地图资源类型navtypeshpp) |
+| `MapTransferOptions` | [8.3](#83-导航定位与地图资源类型navtypeshpp) |
 | `MotionMode` | [8.4](#84-运动类型motiontypeshpp) |
 | `MotionState` | [8.4](#84-运动类型motiontypeshpp) |
-| `NavigationPath` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `NavigationPoint` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `NavigationState` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `NavigationStatus` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `NavigationTrajectory` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `PauseState` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `PauseStateEventCallback` | [8.3](#83-导航与建图类型navtypeshpp) |
+| `NavigationOutputStatus` | [8.3](#83-导航定位与地图资源类型navtypeshpp) |
+| `NavigationPath` | [8.3](#83-导航定位与地图资源类型navtypeshpp) |
+| `NavigationPoint` | [8.3](#83-导航定位与地图资源类型navtypeshpp) |
+| `NavigationState` | [8.3](#83-导航定位与地图资源类型navtypeshpp) |
+| `NavigationStatus` | [8.3](#83-导航定位与地图资源类型navtypeshpp) |
+| `NavigationTaskMode` | [8.3](#83-导航定位与地图资源类型navtypeshpp) |
+| `NavigationTrajectory` | [8.3](#83-导航定位与地图资源类型navtypeshpp) |
+| `PauseState` | [8.3](#83-导航定位与地图资源类型navtypeshpp) |
+| `PauseStateEventCallback` | [8.3](#83-导航定位与地图资源类型navtypeshpp) |
 | `Pose` | [8.1](#81-通用类型commontypeshpp) |
 | `Pose2D` | [8.1](#81-通用类型commontypeshpp) |
 | `Point3D` | [8.1](#81-通用类型commontypeshpp) |
 | `Quaternion` | [8.1](#81-通用类型commontypeshpp) |
-| `RecordResult` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `RecordingState` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `RobotOptions` | [8.5](#85-机器人类型robotypeshpp) |
-| `SceneDetail` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `SceneInfo` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `SLAMErrorCode` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `SlamState` | [8.3](#83-导航与建图类型navtypeshpp) |
-| `SLAMWorkMode` | [8.3](#83-导航与建图类型navtypeshpp) |
+| `RobotOptions` | [8.5](#85-机器人类型robottypeshpp) |
+| `SceneDetail` | [8.3](#83-导航定位与地图资源类型navtypeshpp) |
+| `SceneInfo` | [8.3](#83-导航定位与地图资源类型navtypeshpp) |
+| `sdk_version_major()` | [8.6](#86-版本信息versionhpp) |
+| `sdk_version_minor()` | [8.6](#86-版本信息versionhpp) |
+| `sdk_version_patch()` | [8.6](#86-版本信息versionhpp) |
+| `sdk_version_string()` | [8.6](#86-版本信息versionhpp) |
 | `SubscribeOptions` | [8.1](#81-通用类型commontypeshpp) |
 | `Subscription` | [8.1](#81-通用类型commontypeshpp) |

@@ -1,8 +1,8 @@
 # Robot SDK CMake configuration
-set(robot_VERSION 0.1.2)
+set(robot_VERSION 0.1.3)
 set(robot_VERSION_MAJOR 0)
 set(robot_VERSION_MINOR 1)
-set(robot_VERSION_PATCH 2)
+set(robot_VERSION_PATCH 3)
 
 # Find dependency
 include(CMakeFindDependencyMacro)

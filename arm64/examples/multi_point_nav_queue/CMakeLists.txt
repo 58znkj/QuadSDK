@@ -35,4 +35,8 @@ if(ROBOT_INSTALL)
   install(TARGETS quad_example_multi_point_nav_queue
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     COMPONENT robot)
+  install(PROGRAMS run_current_config.sh
+    DESTINATION ${CMAKE_INSTALL_BINDIR}
+    RENAME quad_example_multi_point_nav_queue_current_config.sh
+    COMPONENT robot)
 endif()

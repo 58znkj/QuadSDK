@@ -28,6 +28,7 @@ enum class ErrorCode {
     NAV_MAP_INDEX_ERROR = 13,                    /**< 地图索引无效。 */
     NAV_STOP_BARRIER_ON_STAIR = 14,              /**< 楼梯场景因障碍物停止。 */
     NAV_PREEMPTED = 20,                          /**< 导航任务被抢占。 */
+    NAV_TASK_CANCELLED = 21,                     /**< 导航任务被本体取消。 */
     NAV_UNKNOWN_ERROR = 99,                      /**< 未知导航错误。 */
     NAV_OUT_OF_TRACK = 30,                       /**< 机器人偏离轨迹。 */
     NAV_NAV_COLLAPSE = 31,                       /**< 导航解算异常。 */
@@ -62,6 +63,8 @@ enum class ErrorCode {
     SDK_RESOURCE_NOT_FOUND = 607,                /**< SDK 所需资源不存在。 */
     SDK_IO_ERROR = 608,                          /**< SDK I/O 异常。 */
     SDK_PROTOCOL_UNKNOWN_CODE = 609,             /**< 收到未知协议错误码。 */
+    SDK_COMMAND_SUPERSEDED = 610,                /**< SDK 命令被同通道新命令替换。 */
+    SDK_NAVIGATION_BUSY = 611,                   /**< SDK 导航任务尚未结束。 */
     SDK_INTERNAL_ERROR = 699,                    /**< SDK 内部错误。 */
 };
 

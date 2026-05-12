@@ -14,4 +14,5 @@ if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
 endif()
 
 add_subdirectory(logging)
+add_subdirectory(multi_point_nav_queue)
 add_subdirectory(pose_nav_workflow)

@@ -3,13 +3,12 @@
 
 /**
  * @file nav/types.hpp
- * @brief Quad SDK 导航、建图与地图资源相关类型定义。
+ * @brief Quad SDK 导航、定位与地图资源相关类型定义。
  */
 
 #include <chrono>
 #include <cstdint>
 #include <functional>
-#include <optional>
 #include <robot/quad/common/types.hpp>
 #include <string>
 #include <vector>
@@ -32,68 +31,33 @@ enum class NavigationStatus {
     FAILED = 4        /**< 执行失败。 */
 };
 
-/** @brief SLAM 工作模式。 */
-enum class SLAMWorkMode {
-    IDLE = 0,          /**< 空闲。 */
-    MAPPING = 1,       /**< 建图中。 */
-    SAVING = 2,        /**< 保存地图中。 */
-    RELOCATING = 3,    /**< 重定位中。 */
-    LOCALIZING = 4     /**< 定位中。 */
+/** @brief 导航任务模式。 */
+enum class NavigationTaskMode : uint32_t {
+    POSE = 0,            /**< 定点导航。 */
+    PATH = 1,            /**< 循迹导航。 */
+    UNKNOWN = 0xFFFFFFFF /**< 未知模式。 */
 };
 
-/** @brief 建图场景类型。 */
-enum class MappingSceneType {
-    INDOOR = 1,            /**< 室内场景。 */
-    OUTDOOR_NORMAL = 2,    /**< 常规室外场景。 */
-    OUTDOOR_OPEN = 3       /**< 开阔室外场景。 */
-};
-
-/** @brief SLAM 错误码。 */
-enum class SLAMErrorCode {
-    NORMAL = 0,              /**< 正常。 */
-    UNABLE_START = 1,        /**< 无法启动。 */
-    NO_IMU = 2,              /**< 缺少 IMU 数据。 */
-    NO_LIDAR = 3,            /**< 缺少雷达数据。 */
-    LIDAR_INCOMPLETE = 4,    /**< 雷达数据不完整。 */
-    MAP_NOT_FOUND = 5,       /**< 地图不存在。 */
-    LOCALIZE_ERROR = 6,      /**< 重定位失败。 */
-    SLAM_COLLAPSE = 7,       /**< SLAM 崩溃。 */
-    MAPPING_FAIL = 8,        /**< 建图失败。 */
-    LIDAR_ERROR = 9,         /**< 雷达设备异常。 */
-    IMU_ERROR = 10,          /**< IMU 设备异常。 */
-    GNSS_ERROR = 11,         /**< GNSS 设备异常。 */
-    SYNC_ERROR = 12          /**< 传感器同步异常。 */
-};
-
-/** @brief 建图路径点。 */
-struct MappingPathPoint {
-    double x{0};    /**< X 坐标。 */
-    double y{0};    /**< Y 坐标。 */
-    double z{0};    /**< Z 坐标。 */
-};
-
-/** @brief 定位结果。 */
-struct LocalizationInfo {
-    float position_x{0};      /**< X 坐标（米）。 */
-    float position_y{0};      /**< Y 坐标（米）。 */
-    float position_z{0};      /**< Z 坐标（米）。 */
-    float orientation_w{1};   /**< 四元数 w 分量。 */
-    float orientation_x{0};   /**< 四元数 x 分量。 */
-    float orientation_y{0};   /**< 四元数 y 分量。 */
-    float orientation_z{0};   /**< 四元数 z 分量。 */
-    float laser_quality{0};   /**< 激光质量评分。 */
+/** @brief 导航输出状态。 */
+enum class NavigationOutputStatus : uint32_t {
+    NONE = 0,            /**< 无任务状态。 */
+    FINISHED = 1,        /**< 导航任务完成。 */
+    RUNNING = 2,         /**< 导航任务正在执行。 */
+    CANCELLED = 3,       /**< 导航任务取消。 */
+    FAILED = 4,          /**< 导航任务失败。 */
+    UNKNOWN = 0xFFFFFFFF /**< 未知输出状态。 */
 };
 
 /** @brief 当前导航状态快照。 */
 struct NavigationState {
-    NavigationStatus status{NavigationStatus::IDLE};    /**< 当前导航任务状态。 */
-    uint32_t         task_id{0};                        /**< 当前导航任务 ID。 */
-    uint32_t         task_mode{0};                      /**< 当前导航任务模式（协议层）。 */
-    uint32_t         output_status{0};                  /**< 导航输出状态码（协议层）。 */
-    uint32_t         current_map_index{0};              /**< 当前地图索引。 */
-    ErrorCode        error{ErrorCode::SUCCESS};         /**< 统一错误码，由 SDK 映射自协议层。 */
-    std::string      error_message;                     /**< 错误描述文本，用于排障。 */
-    bool             fresh{false};                      /**< 当前连接周期内是否已收到有效上报。 */
+    NavigationStatus       status{NavigationStatus::IDLE};          /**< 当前导航任务状态。 */
+    uint32_t               task_id{0};                              /**< 当前导航任务 ID。 */
+    NavigationTaskMode     task_mode{NavigationTaskMode::UNKNOWN};  /**< 当前导航任务模式。 */
+    NavigationOutputStatus output_status{NavigationOutputStatus::NONE};    /**< 导航输出状态。 */
+    uint32_t               current_map_index{0};                    /**< 当前地图索引。 */
+    ErrorCode              error{ErrorCode::SUCCESS};               /**< 统一错误码，由 SDK 映射自协议层。 */
+    std::string            error_message;                           /**< 错误描述文本，用于排障。 */
+    bool                   fresh{false};                            /**< 当前连接周期内是否已收到有效上报。 */
 };
 
 /** @brief 最近一次导航终态结果。 */
@@ -147,38 +111,12 @@ struct NavigationTrajectory {
     std::vector<NavigationPath>   paths;            /**< 路径列表。 */
 };
 
-/** @brief 轨迹录制结果。 */
-enum class RecordResult {
-    POINT_ADDED = 0,    /**< 新增了一个录制点。 */
-    SUCCESS = 1,        /**< 录制成功。 */
-    FAIL = 2,           /**< 录制失败。 */
-    STARTING = 3        /**< 录制启动中。 */
-};
-
-/** @brief SLAM 状态快照。 */
-struct SlamState {
-    SLAMWorkMode  mode{SLAMWorkMode::IDLE};         /**< 当前 SLAM 工作模式。 */
-    SLAMErrorCode error{SLAMErrorCode::NORMAL};     /**< SLAM 错误码。 */
-    bool          is_mapping{false};                /**< 是否处于建图中。 */
-    bool          fresh{false};                     /**< 当前连接周期内是否已收到有效上报。 */
-};
-
 /** @brief 定位状态快照。 */
 struct LocalizationState {
-    LocalizationInfo info;          /**< 定位位姿与激光质量。 */
-    bool             ready{false};  /**< 定位是否就绪。 */
-    bool             fresh{false};  /**< 当前连接周期内是否已收到有效上报。 */
-};
-
-/** @brief 建图进度状态。 */
-struct MappingProgressState {
-    std::optional<MappingPathPoint> latest_path_point;  /**< 最新建图路径点。 */
-    bool                            fresh{false};       /**< 建图路径数据是否新鲜。 */
-};
-
-/** @brief 录制状态快照。 */
-struct RecordingState {
-    RecordResult result{RecordResult::FAIL};     /**< 最近一次录制结果。 */
+    Pose  pose;                 /**< 定位位姿。 */
+    float laser_quality{0};     /**< 激光质量评分。 */
+    bool  ready{false};         /**< 定位是否就绪。 */
+    bool  fresh{false};         /**< 当前连接周期内是否已收到有效上报。 */
 };
 
 /** @brief 地图资源缓存快照。 */
@@ -209,26 +147,15 @@ struct MapResourceEvent {
     std::string          path_name;     /**< 关联的路径名称（仅路径相关事件有值）。 */
 };
 
-/** @brief SLAM 状态事件回调。 */
-using SlamStateEventCallback = std::function<void(const SlamState&)>;
 /** @brief 定位状态事件回调。 */
 using LocalizationStateEventCallback =
     std::function<void(const LocalizationState&)>;
-/** @brief 建图路径点事件回调。 */
-using MappingPathPointEventCallback =
-    std::function<void(const std::optional<MappingPathPoint>&)>;
-/** @brief 建图进度状态事件回调。 */
-using MappingProgressEventCallback =
-    std::function<void(const MappingProgressState&)>;
 /** @brief 导航状态事件回调。 */
 using NavigationStateEventCallback = std::function<void(const NavigationState&)>;
 /** @brief 导航结果事件回调。 */
 using NavigationResultEventCallback = std::function<void(const NavigationResult&)>;
 /** @brief 暂停状态事件回调。 */
 using PauseStateEventCallback = std::function<void(const PauseState&)>;
-/** @brief 录制状态事件回调。 */
-using RecordingStateEventCallback =
-    std::function<void(const RecordingState&)>;
 /** @brief 地图资源事件回调。 */
 using MapResourceEventCallback =
     std::function<void(const MapResourceEvent&)>;

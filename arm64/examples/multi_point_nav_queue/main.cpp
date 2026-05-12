@@ -12,6 +12,7 @@
 #include <memory>
 #include <mutex>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -25,8 +26,7 @@ using Clock = std::chrono::steady_clock;
 constexpr auto kRobotConnectTimeout = std::chrono::seconds(10);
 constexpr auto kCommandResultTimeout = std::chrono::seconds(60);
 constexpr auto kLocalizationReadyTimeout = std::chrono::seconds(60);
-constexpr auto kNavigationFinishTimeout = std::chrono::minutes(10);
-constexpr auto kNavigationSettleDelay = std::chrono::milliseconds(500);
+constexpr auto kDefaultNavigationFinishTimeout = std::chrono::seconds(10);
 constexpr auto kPollInterval = std::chrono::milliseconds(200);
 
 struct Waypoint {
@@ -34,19 +34,31 @@ struct Waypoint {
   quad::Pose pose;
 };
 
+struct AppConfig {
+  std::string robot_ip{"192.168.3.20"};
+  std::string scene_name{"430"};
+  std::vector<Waypoint> waypoints;
+  std::chrono::milliseconds navigation_finish_timeout{
+      kDefaultNavigationFinishTimeout};
+  std::chrono::milliseconds advance_after{0};
+  bool show_help{false};
+};
+
 struct WaypointTiming {
   std::string name;
   std::int64_t dispatch_to_finish_ms{0};
   std::int64_t finish_to_next_dispatch_ms{-1};
+  bool advanced_to_next{false};
   quad::NavigationResult final_result;
   quad::NavigationState final_state_snapshot;
 };
 
-struct NavigationResultWaiter {
+struct NavigationStateWaiter {
   std::mutex mutex;
   std::condition_variable condition;
   bool done{false};
-  quad::NavigationResult result;
+  bool running_seen{false};
+  quad::NavigationState state;
   Clock::time_point finish_time;
   quad::Subscription subscription;
 };
@@ -67,6 +79,197 @@ quad::Pose makePose(float position_x,
   pose.orientation.y = quaternion_y;
   pose.orientation.z = quaternion_z;
   return pose;
+}
+
+std::vector<Waypoint> defaultWaypoints() {
+  return {
+      {"point_1", makePose(1, 0, 0, 1.000f, 0.010f, 0.001f, -0.006f)},
+      {"point_2", makePose(2, 0, 0, 1, 0.010f, 0.001f, -0.004f)},
+      {"point_3", makePose(3, 0, 0, 0.872f, 0.017f, 0.004f, 0.489f)},
+  };
+}
+
+std::vector<std::string> splitText(const std::string& text, char delimiter) {
+  std::vector<std::string> parts;
+  std::string current;
+  std::istringstream stream(text);
+  while (std::getline(stream, current, delimiter)) {
+    parts.push_back(current);
+  }
+  if (!text.empty() && text.back() == delimiter) {
+    parts.emplace_back();
+  }
+  return parts;
+}
+
+float parseFloatArgument(const std::string& text,
+                         const std::string& field_name) {
+  std::size_t consumed = 0;
+  const float value = std::stof(text, &consumed);
+  if (consumed != text.size()) {
+    throw std::invalid_argument(field_name + " 不是有效浮点数：" + text);
+  }
+  return value;
+}
+
+std::chrono::milliseconds parseMillisecondsArgument(
+    const std::string& text,
+    const std::string& option_name,
+    bool allow_zero) {
+  std::size_t consumed = 0;
+  const long long value = std::stoll(text, &consumed);
+  if (consumed != text.size() || value < 0 || (!allow_zero && value == 0)) {
+    throw std::invalid_argument(option_name + " 不是有效毫秒数：" + text);
+  }
+  return std::chrono::milliseconds(value);
+}
+
+Waypoint parseWaypointArgument(const std::string& text, std::size_t index) {
+  const std::size_t colon = text.find(':');
+  if (colon != std::string::npos) {
+    Waypoint waypoint = parseWaypointArgument(text.substr(colon + 1), index);
+    waypoint.name = text.substr(0, colon);
+    if (waypoint.name.empty()) {
+      throw std::invalid_argument("--point 名称不能为空：" + text);
+    }
+    return waypoint;
+  }
+
+  const std::vector<std::string> parts = splitText(text, ',');
+  if (parts.size() != 7 && parts.size() != 8) {
+    throw std::invalid_argument(
+        "--point 格式应为 name,x,y,z,qw,qx,qy,qz 或 x,y,z,qw,qx,qy,qz：" +
+        text);
+  }
+
+  const bool has_name = parts.size() == 8;
+  const std::size_t offset = has_name ? 1 : 0;
+  Waypoint waypoint;
+  waypoint.name = has_name ? parts[0] : ("point_" + std::to_string(index));
+  if (waypoint.name.empty()) {
+    throw std::invalid_argument("--point 名称不能为空：" + text);
+  }
+  waypoint.pose = makePose(
+      parseFloatArgument(parts[offset + 0], "x"),
+      parseFloatArgument(parts[offset + 1], "y"),
+      parseFloatArgument(parts[offset + 2], "z"),
+      parseFloatArgument(parts[offset + 3], "qw"),
+      parseFloatArgument(parts[offset + 4], "qx"),
+      parseFloatArgument(parts[offset + 5], "qy"),
+      parseFloatArgument(parts[offset + 6], "qz"));
+  return waypoint;
+}
+
+bool consumeOptionValue(const std::string& arg,
+                        const std::string& option_name,
+                        int* index,
+                        int argc,
+                        char** argv,
+                        std::string* value) {
+  if (arg == option_name) {
+    if (*index + 1 >= argc) {
+      throw std::invalid_argument(option_name + " 缺少参数值");
+    }
+    *value = argv[++(*index)];
+    return true;
+  }
+
+  const std::string prefix = option_name + "=";
+  if (arg.rfind(prefix, 0) == 0) {
+    *value = arg.substr(prefix.size());
+    if (value->empty()) {
+      throw std::invalid_argument(option_name + " 参数值不能为空");
+    }
+    return true;
+  }
+  return false;
+}
+
+void printUsage(const char* program_name) {
+  std::cout
+      << "用法：\n"
+      << "  " << program_name
+      << " [--robot-ip IP] [--scene NAME] [--point SPEC ...]\n"
+      << "      [--advance-after-ms MS] [--finish-timeout-ms MS]\n\n"
+      << "参数：\n"
+      << "  --robot-ip IP              机器人 IP，默认 192.168.3.20\n"
+      << "  --scene NAME               场景名称，默认 430\n"
+      << "  --point SPEC               导航点，可重复。格式：\n"
+      << "                             name,x,y,z,qw,qx,qy,qz\n"
+      << "                             或 x,y,z,qw,qx,qy,qz\n"
+      << "  --advance-after-ms MS      提前下发模式。当前点执行 MS 毫秒后，\n"
+      << "                             若还未到终态，直接下发下一个点；0 表示关闭\n"
+      << "  --finish-timeout-ms MS     单点等待终态超时，默认 "
+      << kDefaultNavigationFinishTimeout.count() * 1000 << "\n"
+      << "  --help                     打印帮助\n\n"
+      << "兼容旧参数：\n"
+      << "  " << program_name << " [robot_ip] [scene_name] [point ...]\n";
+}
+
+AppConfig parseArgs(int argc, char** argv) {
+  AppConfig config;
+  std::vector<Waypoint> parsed_waypoints;
+  std::vector<std::string> positional;
+
+  for (int i = 1; i < argc; ++i) {
+    const std::string arg = argv[i];
+    std::string value;
+    if (arg == "--help" || arg == "-h") {
+      config.show_help = true;
+      return config;
+    }
+    if (consumeOptionValue(arg, "--robot-ip", &i, argc, argv, &value)) {
+      config.robot_ip = value;
+      continue;
+    }
+    if (consumeOptionValue(arg, "--scene", &i, argc, argv, &value)) {
+      config.scene_name = value;
+      continue;
+    }
+    if (consumeOptionValue(arg, "--point", &i, argc, argv, &value)) {
+      parsed_waypoints.push_back(
+          parseWaypointArgument(value, parsed_waypoints.size() + 1));
+      continue;
+    }
+    if (consumeOptionValue(
+            arg, "--advance-after-ms", &i, argc, argv, &value) ||
+        consumeOptionValue(arg, "--early-next-ms", &i, argc, argv, &value)) {
+      config.advance_after =
+          parseMillisecondsArgument(value, "--advance-after-ms", true);
+      continue;
+    }
+    if (consumeOptionValue(
+            arg, "--finish-timeout-ms", &i, argc, argv, &value)) {
+      config.navigation_finish_timeout =
+          parseMillisecondsArgument(value, "--finish-timeout-ms", false);
+      continue;
+    }
+    if (!arg.empty() && arg[0] == '-') {
+      throw std::invalid_argument("未知参数：" + arg);
+    }
+    positional.push_back(arg);
+  }
+
+  if (!positional.empty()) {
+    config.robot_ip = positional[0];
+  }
+  if (positional.size() >= 2) {
+    config.scene_name = positional[1];
+  }
+  for (std::size_t i = 2; i < positional.size(); ++i) {
+    parsed_waypoints.push_back(
+        parseWaypointArgument(positional[i], parsed_waypoints.size() + 1));
+  }
+
+  if (parsed_waypoints.empty()) {
+    config.waypoints = defaultWaypoints();
+  } else {
+    config.waypoints = std::move(parsed_waypoints);
+  }
+  if (config.waypoints.empty()) {
+    throw std::invalid_argument("至少需要 1 个导航点");
+  }
+  return config;
 }
 
 std::string timestampText() {
@@ -133,12 +336,9 @@ const char* navigationStatusText(quad::NavigationStatus status) {
 }
 
 bool isTerminalNavigationStatus(quad::NavigationStatus status) {
-  return 
-    status == quad::NavigationStatus::FINISHED ||
-    status == quad::NavigationStatus::CANCELLED ||
-    status == quad::NavigationStatus::FAILED;
-  // status == quad::NavigationStatus::IDLE ||
-
+  return status == quad::NavigationStatus::FINISHED ||
+         status == quad::NavigationStatus::CANCELLED ||
+         status == quad::NavigationStatus::FAILED;
 }
 
 void printPose(const char* label, const quad::Pose& pose) {
@@ -188,6 +388,15 @@ void printNavigationStateEvent(const quad::NavigationState& state) {
   }
   stream << "\n";
   std::cout << stream.str();
+}
+
+quad::NavigationResult navigationResultFromState(
+    const quad::NavigationState& state) {
+  quad::NavigationResult result;
+  result.status = state.status;
+  result.error = state.error;
+  result.fresh = state.fresh;
+  return result;
 }
 
 quad::SubscribeOptions freshChangedNoReplayOptions() {
@@ -299,9 +508,9 @@ bool startLocalization(quad::Robot& robot,
         robot.nav().mapping().getLocalizationState();
     if (state.ready && state.fresh) {
       logInfo() << "定位已就绪"
-                << " x=" << state.info.position_x
-                << " y=" << state.info.position_y
-                << " laser_quality=" << state.info.laser_quality << "\n";
+                << " x=" << state.pose.position.x
+                << " y=" << state.pose.position.y
+                << " laser_quality=" << state.laser_quality << "\n";
       return true;
     }
     std::this_thread::sleep_for(kPollInterval);
@@ -327,24 +536,26 @@ bool ensureNavigationMotionMode(quad::Robot& robot) {
       &result);
 }
 
-bool waitForNavigationResult(quad::Robot& robot,
-                             const std::shared_ptr<NavigationResultWaiter>&
-                                 waiter,
-                             quad::NavigationResult* final_result,
-                             Clock::time_point* finish_time) {
+bool waitForNavigationFinished(quad::Robot& robot,
+                               const std::shared_ptr<NavigationStateWaiter>&
+                                   waiter,
+                               std::chrono::milliseconds timeout,
+                               quad::NavigationState* final_state,
+                               Clock::time_point* finish_time,
+                               bool log_timeout = true) {
   if (!waiter || !waiter->subscription.valid()) {
-    logError() << "导航结果订阅未建立\n";
+    logError() << "导航状态订阅未建立\n";
     return false;
   }
 
   std::unique_lock<std::mutex> lock(waiter->mutex);
   const bool ready = waiter->condition.wait_until(
-      lock, Clock::now() + kNavigationFinishTimeout, [&waiter] {
+      lock, Clock::now() + timeout, [&waiter] {
         return waiter->done;
       });
   if (ready) {
-    if (final_result != nullptr) {
-      *final_result = waiter->result;
+    if (final_state != nullptr) {
+      *final_state = waiter->state;
     }
     if (finish_time != nullptr) {
       *finish_time = waiter->finish_time;
@@ -354,21 +565,25 @@ bool waitForNavigationResult(quad::Robot& robot,
   }
 
   waiter->subscription.unsubscribe();
-  if (final_result != nullptr) {
-    *final_result = robot.nav().navigation().getNavigationResult();
+  if (final_state != nullptr) {
+    *final_state = robot.nav().navigation().getNavigationState();
   }
-  logError() << "等待导航任务执行完成超时\n";
+  if (log_timeout) {
+    logError() << "等待导航任务执行完成超时\n";
+  }
   return false;
 }
 
-std::shared_ptr<NavigationResultWaiter> createNavigationResultWaiter(
+std::shared_ptr<NavigationStateWaiter> createNavigationStateWaiter(
     quad::Robot& robot) {
-  auto waiter = std::make_shared<NavigationResultWaiter>();
+  auto waiter = std::make_shared<NavigationStateWaiter>();
   waiter->subscription =
-      robot.nav().navigation().registerNavigationResultEvent(
-          [waiter](const quad::NavigationResult& result) {
-            if (!result.fresh ||
-                !isTerminalNavigationStatus(result.status)) {
+      robot.nav().navigation().registerNavigationStateEvent(
+          [waiter](const quad::NavigationState& state) {
+            if (state.fresh) {
+              printNavigationStateEvent(state);
+            }
+            if (!state.fresh) {
               return;
             }
 
@@ -377,8 +592,16 @@ std::shared_ptr<NavigationResultWaiter> createNavigationResultWaiter(
               if (waiter->done) {
                 return;
               }
+              if (state.status == quad::NavigationStatus::RUNNING) {
+                waiter->running_seen = true;
+                return;
+              }
+              if (!waiter->running_seen ||
+                  !isTerminalNavigationStatus(state.status)) {
+                return;
+              }
               waiter->done = true;
-              waiter->result = result;
+              waiter->state = state;
               waiter->finish_time = Clock::now();
             }
             waiter->condition.notify_one();
@@ -393,8 +616,11 @@ void printTimingSummary(const std::vector<WaypointTiming>& timings) {
   for (const WaypointTiming& timing : timings) {
     std::ostream& stream = logInfo();
     stream << timing.name
-           << " dispatch_to_finish=" << timing.dispatch_to_finish_ms
-           << " finish_to_next_dispatch=";
+           << (timing.advanced_to_next ? " dispatch_to_advance="
+                                        : " dispatch_to_finish=")
+           << timing.dispatch_to_finish_ms
+           << (timing.advanced_to_next ? " advance_to_next_dispatch="
+                                        : " finish_to_next_dispatch=");
     if (timing.finish_to_next_dispatch_ms >= 0) {
       stream << timing.finish_to_next_dispatch_ms;
     } else {
@@ -402,6 +628,7 @@ void printTimingSummary(const std::vector<WaypointTiming>& timings) {
     }
     stream << " final_status="
            << navigationStatusText(timing.final_result.status)
+           << " advanced=" << (timing.advanced_to_next ? "true" : "false")
            << " task_id=" << timing.final_state_snapshot.task_id << "\n";
   }
 }
@@ -410,43 +637,17 @@ void printTimingSummary(const std::vector<WaypointTiming>& timings) {
 
 int main(int argc, char** argv) {
   try {
-    const std::string robot_ip =
-        argc > 1 ? argv[1] : std::string("192.168.3.20");
-    const std::string scene_name =
-        argc > 2 ? argv[2] : std::string("430");
+    const AppConfig config = parseArgs(argc, argv);
+    if (config.show_help) {
+      printUsage(argv[0]);
+      return 0;
+    }
 
     const quad::Pose relocalization_pose =
         quad::poseFromXYYawDegrees(0.0f, 0.0f, 0.0f);
 
-    const std::vector<Waypoint> waypoints = {
-        {"point_1",
-         makePose(1,
-                  0,
-                  0,
-                  1.000f,
-                  0.010f,
-                  0.001f,
-                  -0.006f)},
-        {"point_2",
-         makePose(1.5,
-                  0,
-                  0,
-                  1,
-                  0.010f,
-                  0.001f,
-                  -0.004f)},
-        {"point_3",
-         makePose(2,
-                  0,
-                  0,
-                  0.872f,
-                  0.017f,
-                  0.004f,
-                  0.489f)},
-    };
-
     quad::RobotOptions options;
-    options.robot_ip = robot_ip;
+    options.robot_ip = config.robot_ip;
     quad::Robot robot(options);
 
     auto finish = [&robot](int ret_code) {
@@ -469,13 +670,13 @@ int main(int argc, char** argv) {
 
     const quad::MapResourceSnapshot map_resource =
         robot.nav().resource().getMapResources();
-    if (!sceneExists(map_resource, scene_name)) {
-      logError() << "场景不存在：" << scene_name << "\n";
+    if (!sceneExists(map_resource, config.scene_name)) {
+      logError() << "场景不存在：" << config.scene_name << "\n";
       return finish(1);
     }
-    logInfo() << "场景存在：" << scene_name << "\n";
+    logInfo() << "场景存在：" << config.scene_name << "\n";
 
-    if (!startLocalization(robot, scene_name, relocalization_pose)) {
+    if (!startLocalization(robot, config.scene_name, relocalization_pose)) {
       return finish(1);
     }
 
@@ -486,33 +687,22 @@ int main(int argc, char** argv) {
     std::vector<WaypointTiming> timings;
     Clock::time_point previous_finish_time;
     bool has_previous_finish_time = false;
+    if (config.advance_after.count() > 0 && config.waypoints.size() > 1) {
+      logInfo() << "提前下发模式开启 advance_after_ms="
+                << config.advance_after.count() << "\n";
+    }
 
-    for (const Waypoint& waypoint : waypoints) {
-      if (has_previous_finish_time) {
-        // logInfo() << "等待导航状态稳定 "
-        //           << kNavigationSettleDelay.count() << " ms\n";
-        // std::this_thread::sleep_for(kNavigationSettleDelay);
-      }
+    for (std::size_t waypoint_index = 0;
+         waypoint_index < config.waypoints.size();
+         ++waypoint_index) {
+      const Waypoint& waypoint = config.waypoints[waypoint_index];
+      const bool has_next_waypoint =
+          waypoint_index + 1 < config.waypoints.size();
 
-      std::shared_ptr<NavigationResultWaiter> result_waiter =
-          createNavigationResultWaiter(robot);
-      if (!result_waiter->subscription.valid()) {
-        logError() << "导航结果事件订阅失败\n";
-        printTimingSummary(timings);
-        return finish(1);
-      }
-
-      quad::Subscription navigation_state_subscription =
-          robot.nav().navigation().registerNavigationStateEvent(
-              [](const quad::NavigationState& state) {
-                if (state.fresh) {
-                  printNavigationStateEvent(state);
-                }
-              },
-              freshChangedNoReplayOptions());
-      if (!navigation_state_subscription.valid()) {
+      std::shared_ptr<NavigationStateWaiter> state_waiter =
+          createNavigationStateWaiter(robot);
+      if (!state_waiter->subscription.valid()) {
         logError() << "导航状态事件订阅失败\n";
-        result_waiter->subscription.unsubscribe();
         printTimingSummary(timings);
         return finish(1);
       }
@@ -523,15 +713,14 @@ int main(int argc, char** argv) {
       Clock::time_point dispatch_time;
       if (!waitForCommandResult(
               "启动定点导航 " + waypoint.name,
-              [&robot, &scene_name, &waypoint](
+              [&robot, &config, &waypoint](
                   quad::AsyncCommandCallback callback) {
                 return robot.nav().navigation().startNavigation(
-                    scene_name, waypoint.pose, std::move(callback));
+                    config.scene_name, waypoint.pose, std::move(callback));
               },
               &start_result,
               &dispatch_time)) {
-        result_waiter->subscription.unsubscribe();
-        navigation_state_subscription.unsubscribe();
+        state_waiter->subscription.unsubscribe();
         printTimingSummary(timings);
         return finish(1);
       }
@@ -539,31 +728,68 @@ int main(int argc, char** argv) {
       if (has_previous_finish_time && !timings.empty()) {
         timings.back().finish_to_next_dispatch_ms =
             elapsedMs(previous_finish_time, dispatch_time);
-        logInfo() << "上一任务完成到当前指令下发间隔="
+        logInfo() << (timings.back().advanced_to_next
+                          ? "上一任务提前切换到当前指令下发间隔="
+                          : "上一任务完成到当前指令下发间隔=")
                   << timings.back().finish_to_next_dispatch_ms << " ms\n";
       }
 
-      quad::NavigationResult final_result;
+      quad::NavigationState final_state;
       Clock::time_point finish_time;
-      if (!waitForNavigationResult(
-              robot, result_waiter, &final_result, &finish_time)) {
-        navigation_state_subscription.unsubscribe();
+      const bool advance_this_point =
+          config.advance_after.count() > 0 && has_next_waypoint;
+      const bool terminal_ready = waitForNavigationFinished(
+          robot,
+          state_waiter,
+          advance_this_point ? config.advance_after
+                             : config.navigation_finish_timeout,
+          &final_state,
+          &finish_time,
+          !advance_this_point);
+      if (!terminal_ready && advance_this_point) {
+        finish_time = Clock::now();
+        const quad::NavigationResult final_result =
+            navigationResultFromState(final_state);
+        printNavigationState("提前切换时导航状态", final_state);
+        printNavigationResult("提前切换时导航结果", final_result);
+
+        WaypointTiming timing;
+        timing.name = waypoint.name;
+        timing.dispatch_to_finish_ms = elapsedMs(dispatch_time, finish_time);
+        timing.advanced_to_next = true;
+        timing.final_result = final_result;
+        timing.final_state_snapshot = final_state;
+        timings.push_back(timing);
+
+        logInfo() << waypoint.name << " 执行 "
+                  << timing.dispatch_to_finish_ms
+                  << " ms 后提前下发下一个导航点\n";
+
+        previous_finish_time = finish_time;
+        has_previous_finish_time = true;
+        continue;
+      }
+
+      if (!terminal_ready) {
+        const quad::NavigationResult final_result =
+            navigationResultFromState(final_state);
+        printNavigationState("导航最终状态", final_state);
         printNavigationResult("导航最终结果", final_result);
         printTimingSummary(timings);
         return finish(1);
       }
-      navigation_state_subscription.unsubscribe();
+      state_waiter->subscription.unsubscribe();
 
-      const quad::NavigationState final_state_snapshot =
-          robot.nav().navigation().getNavigationState();
+      const quad::NavigationResult final_result =
+          navigationResultFromState(final_state);
       printNavigationResult("导航最终结果", final_result);
-      printNavigationState("导航最终状态快照", final_state_snapshot);
+      printNavigationState("导航最终状态", final_state);
 
       WaypointTiming timing;
       timing.name = waypoint.name;
       timing.dispatch_to_finish_ms = elapsedMs(dispatch_time, finish_time);
       timing.final_result = final_result;
-      timing.final_state_snapshot = final_state_snapshot;
+      timing.final_state_snapshot = final_state;
       timings.push_back(timing);
 
       logInfo() << waypoint.name << " 指令下发到任务完成间隔="

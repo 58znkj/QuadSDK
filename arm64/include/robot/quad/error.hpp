@@ -64,6 +64,7 @@ enum class ErrorCode {
     SDK_IO_ERROR = 608,                          /**< SDK I/O 异常。 */
     SDK_PROTOCOL_UNKNOWN_CODE = 609,             /**< 收到未知协议错误码。 */
     SDK_COMMAND_SUPERSEDED = 610,                /**< SDK 命令被同通道新命令替换。 */
+    SDK_NAVIGATION_BUSY = 611,                   /**< SDK 导航任务尚未结束。 */
     SDK_INTERNAL_ERROR = 699,                    /**< SDK 内部错误。 */
 };
 
